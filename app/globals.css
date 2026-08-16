@@ -2500,6 +2500,66 @@ body {
   line-height: 1.55;
 }
 
+.lift-dynamics-card {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #303030;
+  border-radius: 10px;
+  background: #0c0c0c;
+}
+
+.lift-dynamics-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lift-dynamics-heading h4 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.lift-dynamics-heading > span {
+  color: #969696;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.lift-dynamics-grid {
+  margin-top: 10px;
+}
+
+.power-clarifier {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+  padding: 10px 11px;
+  border: 1px solid #4b442e;
+  border-left: 3px solid var(--yellow);
+  border-radius: 0 8px 8px 0;
+  background: #171611;
+}
+
+.power-clarifier strong {
+  color: var(--yellow);
+  font-size: 9px;
+}
+
+.power-clarifier span,
+.lift-dynamics-note {
+  color: #9a9a93;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.lift-dynamics-note {
+  margin: 8px 0 0;
+}
+
 @media (max-width: 1120px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -2607,6 +2667,14 @@ body {
   }
 
   .arm-stop-result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lift-dynamics-heading {
+    flex-direction: column;
+  }
+
+  .lift-dynamics-grid {
     grid-template-columns: 1fr;
   }
 

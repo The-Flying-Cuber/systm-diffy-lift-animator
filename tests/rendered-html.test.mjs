@@ -32,6 +32,7 @@ test("renders development preview metadata", async () => {
   const html = await response.text();
   assert.match(html, developmentPreviewMeta);
   assert.match(html, /Shared motor torque check/i);
-  assert.match(html, /That is shared by all/i);
-  assert.match(html, /modeled motors/i);
+  assert.match(html, /Both motor groups split this evenly/i);
+  assert.match(html, /Requested 0→100 torque and power/i);
+  assert.match(html, /Watts are power; amps are current/i);
 });

@@ -70,11 +70,23 @@ export type LiveTelemetry = {
   availableMotorRpm: number;
   requestedMotorRpm: number;
   speedUtilization: number;
+  liftGravityForceLb: number;
+  liftFrictionForceLb: number;
+  liftAccelerationForceLb: number;
   requiredLiftForceLb: number;
   stallLiftForceLb: number;
+  liftMotorTorqueSharedNm: number;
+  liftMotorTorquePerGroupNm: number;
+  liftMotorTorquePerMotorNm: number;
+  armMotorTorqueSharedNm: number;
+  armMotorTorquePerGroupNm: number;
+  armMotorTorquePerMotorNm: number;
   motorLoadFraction: number;
+  liftOutputPowerW: number;
+  armOutputPowerW: number;
   mechanicalPowerW: number;
   electricalPowerW: number;
+  electricalPowerPerMotorW: number;
   currentPerMotorA: number;
   liftSpeedInS: number;
   liftAccelerationInS2: number;
@@ -109,6 +121,7 @@ export type ArmStopScenario = {
 
 export type ArmStopPerformance = {
   totalMotors: number;
+  motorsPerGroup: number;
   stallTorquePerMotorNm: number;
   startAngularSpeedRadS: number;
   averageAngularDecelerationRadS2: number;
@@ -118,11 +131,33 @@ export type ArmStopPerformance = {
   idealHoldingSharedNm: number;
   idealBrakingSharedNm: number;
   idealCombinedSharedNm: number;
+  idealCombinedPerGroupNm: number;
   pidAdjustedSharedNm: number;
   lossAdjustedPeakSharedNm: number;
+  lossAdjustedPeakPerGroupNm: number;
   lossAdjustedPeakPerMotorNm: number;
   perMotorStallLoadFraction: number;
   withinStallTorque: boolean;
+};
+
+export type LiftProfilePerformance = {
+  targetTimeS: number;
+  totalMotors: number;
+  motorsPerGroup: number;
+  peakAccelerationInS2: number;
+  acceleratingForceLb: number;
+  deceleratingForceLb: number;
+  acceleratingSharedTorqueNm: number;
+  deceleratingSharedTorqueNm: number;
+  peakSharedTorqueNm: number;
+  peakPerGroupTorqueNm: number;
+  peakPerMotorTorqueNm: number;
+  peakTorqueLoadFraction: number;
+  peakLiftOutputPowerW: number;
+  peakMotorMechanicalPowerW: number;
+  peakElectricalPowerW: number;
+  peakElectricalPowerPerMotorW: number;
+  peakCurrentPerMotorA: number;
 };
 
 export const COLIN_ARM_STOP_SCENARIO: ArmStopScenario = {
@@ -140,7 +175,7 @@ export const DEFAULT_PHYSICS: PhysicsSettings = {
   externalReduction: 1,
   riggingMultiplier: 1,
   liftTravelIn: 48,
-  movingWeightLb: 6,
+  movingWeightLb: 8,
   counterbalanceLb: 2,
   frictionLb: 0.5,
   mechanismEfficiency: 0.85,
@@ -389,6 +424,9 @@ export function getArmStopPerformance(
   const pidAdjustedSharedNm = idealHoldingSharedNm
     + idealBrakingSharedNm * pidPeakMultiplier;
   const lossAdjustedPeakSharedNm = pidAdjustedSharedNm / mechanismEfficiency;
+  const motorsPerGroup = performance.totalMotors / 2;
+  const idealCombinedPerGroupNm = idealCombinedSharedNm / 2;
+  const lossAdjustedPeakPerGroupNm = lossAdjustedPeakSharedNm / 2;
   const lossAdjustedPeakPerMotorNm = lossAdjustedPeakSharedNm / performance.totalMotors;
   const perMotorStallLoadFraction = performance.stallTorquePerMotorNm > 0
     ? lossAdjustedPeakPerMotorNm / performance.stallTorquePerMotorNm
@@ -396,6 +434,7 @@ export function getArmStopPerformance(
 
   return {
     totalMotors: performance.totalMotors,
+    motorsPerGroup,
     stallTorquePerMotorNm: performance.stallTorquePerMotorNm,
     startAngularSpeedRadS,
     averageAngularDecelerationRadS2,
@@ -405,8 +444,10 @@ export function getArmStopPerformance(
     idealHoldingSharedNm,
     idealBrakingSharedNm,
     idealCombinedSharedNm,
+    idealCombinedPerGroupNm,
     pidAdjustedSharedNm,
     lossAdjustedPeakSharedNm,
+    lossAdjustedPeakPerGroupNm,
     lossAdjustedPeakPerMotorNm,
     perMotorStallLoadFraction,
     withinStallTorque: perMotorStallLoadFraction < 1,
@@ -500,8 +541,9 @@ export function getLiveTelemetry(
   const liftTorqueTotalNm = requiredLiftForceN * rigging * motorRadiusM
     / (reduction * mechanismEfficiency);
   const armDynamics = getArmDynamics(settings, motion);
-  const armTorquePerMotorNm = armDynamics.requiredTorqueNm * (motorDiameter / armDiameter)
-    / (reduction * mechanismEfficiency * totalMotors);
+  const armTorqueSharedNm = armDynamics.requiredTorqueNm * (motorDiameter / armDiameter)
+    / (reduction * mechanismEfficiency);
+  const armTorquePerMotorNm = armTorqueSharedNm / totalMotors;
   const liftTorquePerMotorNm = liftTorqueTotalNm / totalMotors;
   const groupATorque = liftTorquePerMotorNm + armTorquePerMotorNm;
   const groupBTorque = -liftTorquePerMotorNm + armTorquePerMotorNm;
@@ -509,10 +551,10 @@ export function getLiveTelemetry(
   const motorLoadFraction = worstMotorTorque / performance.stallTorquePerMotorNm;
 
   const liftOutputPowerW = requiredLiftForceN * liftSpeedInS * INCH_TO_METER;
-  const armOutputPowerW = Math.abs(
-    armDynamics.requiredTorqueNm * motion.armVelocityDegS * Math.PI / 180,
-  );
-  const mechanicalPowerW = (Math.abs(liftOutputPowerW) + armOutputPowerW) / mechanismEfficiency;
+  const armOutputPowerW = armDynamics.requiredTorqueNm
+    * motion.armVelocityDegS * Math.PI / 180;
+  const mechanicalPowerW = (Math.abs(liftOutputPowerW) + Math.abs(armOutputPowerW))
+    / mechanismEfficiency;
   const modeledElectricalFromWork = mechanicalPowerW / motorEfficiency;
   const currentPerMotorA = V5_NO_LOAD_CURRENT_A
     + (V5_STALL_CURRENT_A - V5_NO_LOAD_CURRENT_A) * clamp(motorLoadFraction, 0, 1);
@@ -523,6 +565,7 @@ export function getLiveTelemetry(
     totalMotors * 22,
     Math.max(modeledElectricalFromWork, torqueBasedElectricalW),
   );
+  const electricalPowerPerMotorW = electricalPowerW / totalMotors;
   const availableMotorRpm = settings.cartridgeRpm * estimatedSpeedFraction(motorLoadFraction);
   const speedUtilization = availableMotorRpm > 0
     ? requestedMotorRpm / availableMotorRpm
@@ -536,11 +579,23 @@ export function getLiveTelemetry(
     availableMotorRpm,
     requestedMotorRpm,
     speedUtilization,
+    liftGravityForceLb: gravityLoadN / POUND_FORCE_TO_NEWTON,
+    liftFrictionForceLb: frictionN / POUND_FORCE_TO_NEWTON,
+    liftAccelerationForceLb: accelerationN / POUND_FORCE_TO_NEWTON,
     requiredLiftForceLb,
     stallLiftForceLb: performance.stallLiftForceLb,
+    liftMotorTorqueSharedNm: liftTorqueTotalNm,
+    liftMotorTorquePerGroupNm: liftTorqueTotalNm / 2,
+    liftMotorTorquePerMotorNm: liftTorquePerMotorNm,
+    armMotorTorqueSharedNm: armTorqueSharedNm,
+    armMotorTorquePerGroupNm: armTorqueSharedNm / 2,
+    armMotorTorquePerMotorNm: armTorquePerMotorNm,
     motorLoadFraction,
+    liftOutputPowerW,
+    armOutputPowerW,
     mechanicalPowerW,
     electricalPowerW,
+    electricalPowerPerMotorW,
     currentPerMotorA,
     liftSpeedInS,
     liftAccelerationInS2,
@@ -550,6 +605,88 @@ export function getLiveTelemetry(
     armFrictionTorqueInLb: armDynamics.frictionTorqueInLb,
     requiredArmTorqueInLb: armDynamics.requiredTorqueInLb,
     feasible: speedUtilization <= 1.02 && motorLoadFraction < 1,
+  };
+}
+
+export function getLiftProfilePerformance(
+  settings: PhysicsSettings,
+  targetTimeSeconds: number,
+): LiftProfilePerformance {
+  const performance = getStaticPerformance(settings);
+  const targetTimeS = safe(targetTimeSeconds, performance.fullLiftTimeS);
+  const peakAccelerationPctS2 = 600 / (targetTimeS * targetTimeS);
+  const peakAccelerationInS2 = peakAccelerationPctS2 / 100
+    * safe(settings.liftTravelIn, 48);
+
+  // A tiny positive velocity applies upward-travel friction at the two torque
+  // endpoints without materially changing the acceleration calculation.
+  const accelerating = getLiveTelemetry(settings, {
+    pose: { lift: 0, arm: 0 },
+    liftVelocityPctS: 0.01,
+    liftAccelerationPctS2: peakAccelerationPctS2,
+    armVelocityDegS: 0,
+    armAccelerationDegS2: 0,
+  });
+  const decelerating = getLiveTelemetry(settings, {
+    pose: { lift: 100, arm: 0 },
+    liftVelocityPctS: 0.01,
+    liftAccelerationPctS2: -peakAccelerationPctS2,
+    armVelocityDegS: 0,
+    armAccelerationDegS2: 0,
+  });
+
+  let peakSharedTorqueNm = Math.max(
+    Math.abs(accelerating.liftMotorTorqueSharedNm),
+    Math.abs(decelerating.liftMotorTorqueSharedNm),
+  );
+  let peakLiftOutputPowerW = 0;
+  let peakMotorMechanicalPowerW = 0;
+  let peakElectricalPowerW = 0;
+  let peakCurrentPerMotorA = 0;
+
+  for (let index = 0; index <= 200; index += 1) {
+    const normalized = index / 200;
+    const progress = normalized * normalized * (3 - 2 * normalized);
+    const velocityScale = 6 * normalized * (1 - normalized) / targetTimeS;
+    const accelerationScale = (6 - 12 * normalized) / (targetTimeS * targetTimeS);
+    const sample = getLiveTelemetry(settings, {
+      pose: { lift: 100 * progress, arm: 0 },
+      liftVelocityPctS: 100 * velocityScale,
+      liftAccelerationPctS2: 100 * accelerationScale,
+      armVelocityDegS: 0,
+      armAccelerationDegS2: 0,
+    });
+
+    peakSharedTorqueNm = Math.max(
+      peakSharedTorqueNm,
+      Math.abs(sample.liftMotorTorqueSharedNm),
+    );
+    peakLiftOutputPowerW = Math.max(peakLiftOutputPowerW, Math.abs(sample.liftOutputPowerW));
+    peakMotorMechanicalPowerW = Math.max(peakMotorMechanicalPowerW, sample.mechanicalPowerW);
+    peakElectricalPowerW = Math.max(peakElectricalPowerW, sample.electricalPowerW);
+    peakCurrentPerMotorA = Math.max(peakCurrentPerMotorA, sample.currentPerMotorA);
+  }
+
+  const peakPerMotorTorqueNm = peakSharedTorqueNm / performance.totalMotors;
+
+  return {
+    targetTimeS,
+    totalMotors: performance.totalMotors,
+    motorsPerGroup: performance.totalMotors / 2,
+    peakAccelerationInS2,
+    acceleratingForceLb: accelerating.requiredLiftForceLb,
+    deceleratingForceLb: decelerating.requiredLiftForceLb,
+    acceleratingSharedTorqueNm: accelerating.liftMotorTorqueSharedNm,
+    deceleratingSharedTorqueNm: decelerating.liftMotorTorqueSharedNm,
+    peakSharedTorqueNm,
+    peakPerGroupTorqueNm: peakSharedTorqueNm / 2,
+    peakPerMotorTorqueNm,
+    peakTorqueLoadFraction: peakPerMotorTorqueNm / performance.stallTorquePerMotorNm,
+    peakLiftOutputPowerW,
+    peakMotorMechanicalPowerW,
+    peakElectricalPowerW,
+    peakElectricalPowerPerMotorW: peakElectricalPowerW / performance.totalMotors,
+    peakCurrentPerMotorA,
   };
 }
 

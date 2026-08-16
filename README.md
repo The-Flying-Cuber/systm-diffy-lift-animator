@@ -17,8 +17,12 @@ the performance of a continuous differential lift.
 - Calculates arm gravity torque from its live angle and calculates acceleration
   torque from the arm and payload moment of inertia.
 - Includes an editable worst-case arm-stop check for starting RPM, stop time,
-  effective arm reduction, PID braking peak, shared total torque, per-motor
-  torque, and stall-load percentage.
+  effective arm reduction, PID braking peak, shared total torque, per-group
+  torque, per-motor torque, and stall-load percentage.
+- Calculates lift acceleration and deceleration from the corrected 8 lb moving
+  mass, then reports signed force, shared torque, per-group torque, per-motor
+  torque, mechanical watts, total electrical watts, watts per motor, and amps
+  per motor.
 - Allows mechanism values such as gearing, spool diameter, lift weight, arm
   mass, center of mass, payload geometry, friction, and efficiency to be adjusted.
 - Saves the current program and settings in the browser.
@@ -26,8 +30,9 @@ the performance of a continuous differential lift.
 The included Colin stop preset models a 97.5 RPM arm stopping in 0.1 seconds
 through a 4:1 reduction. With the default 6.5 lbf·in horizontal arm moment, the
 ideal motor-side result is about 0.184 N·m holding plus 0.316 N·m braking, or
-0.500 N·m shared across all modeled motors before efficiency losses and PID
-peak allowance.
+0.500 N·m shared evenly between Motor Group A and Motor Group B before each
+group divides its half among its motors. The adjusted result then applies
+efficiency losses and the editable PID peak allowance.
 
 ## How to Use It
 

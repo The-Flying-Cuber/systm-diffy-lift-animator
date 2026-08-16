@@ -6,6 +6,7 @@ import {
   DEFAULT_PHYSICS,
   getArmDynamics,
   getArmStopPerformance,
+  getLiftProfilePerformance,
   getLiveTelemetry,
   minimumMoveDuration,
 } from "../app/physics.ts";
@@ -39,6 +40,9 @@ test("Colin stop preset produces 0.5 N·m shared before losses", () => {
   assert.ok(Math.abs(result.idealBrakingSharedNm - 0.316) < 0.005);
   assert.ok(Math.abs(result.idealCombinedSharedNm - 0.5) < 0.01);
   assert.equal(result.totalMotors, 4);
+  assert.equal(result.motorsPerGroup, 2);
+  assert.ok(Math.abs(result.idealCombinedPerGroupNm * 2 - result.idealCombinedSharedNm) < 1e-12);
+  assert.ok(Math.abs(result.lossAdjustedPeakPerGroupNm * 2 - result.lossAdjustedPeakSharedNm) < 1e-12);
   assert.ok(
     Math.abs(
       result.lossAdjustedPeakPerMotorNm
@@ -47,6 +51,45 @@ test("Colin stop preset produces 0.5 N·m shared before losses", () => {
   );
   assert.ok(result.perMotorStallLoadFraction > 0);
   assert.ok(result.perMotorStallLoadFraction < 1);
+});
+
+test("lift acceleration, deceleration, torque sharing, and power are modeled", () => {
+  assert.equal(DEFAULT_PHYSICS.movingWeightLb, 8);
+
+  const accelerating = getLiveTelemetry(DEFAULT_PHYSICS, {
+    pose: { lift: 40, arm: 0 },
+    liftVelocityPctS: 50,
+    liftAccelerationPctS2: 400 / DEFAULT_PHYSICS.liftTravelIn * 100,
+    armVelocityDegS: 0,
+    armAccelerationDegS2: 0,
+  });
+  const decelerating = getLiveTelemetry(DEFAULT_PHYSICS, {
+    pose: { lift: 60, arm: 0 },
+    liftVelocityPctS: 50,
+    liftAccelerationPctS2: -400 / DEFAULT_PHYSICS.liftTravelIn * 100,
+    armVelocityDegS: 0,
+    armAccelerationDegS2: 0,
+  });
+
+  assert.ok(accelerating.liftAccelerationForceLb > 0);
+  assert.ok(decelerating.liftAccelerationForceLb < 0);
+  assert.ok(accelerating.requiredLiftForceLb > decelerating.requiredLiftForceLb);
+  assert.ok(Math.abs(accelerating.liftMotorTorquePerGroupNm * 2
+    - accelerating.liftMotorTorqueSharedNm) < 1e-12);
+  assert.ok(Math.abs(accelerating.liftMotorTorquePerMotorNm * 4
+    - accelerating.liftMotorTorqueSharedNm) < 1e-12);
+  assert.ok(Math.abs(accelerating.electricalPowerPerMotorW * 4
+    - accelerating.electricalPowerW) < 1e-12);
+  assert.ok(accelerating.liftOutputPowerW > 0);
+
+  const profile = getLiftProfilePerformance(DEFAULT_PHYSICS, 0.727);
+  assert.equal(profile.totalMotors, 4);
+  assert.equal(profile.motorsPerGroup, 2);
+  assert.ok(profile.acceleratingSharedTorqueNm > profile.deceleratingSharedTorqueNm);
+  assert.ok(profile.peakLiftOutputPowerW > 0);
+  assert.ok(profile.peakElectricalPowerW > 0);
+  assert.ok(profile.peakElectricalPowerPerMotorW <= 22);
+  assert.ok(profile.peakCurrentPerMotorA <= 2.5);
 });
 
 test("live load and duration checks include the dynamic arm model", () => {

@@ -8,8 +8,9 @@ import {
   clamp,
   differentialTurns,
   finite,
-  getLiveTelemetry,
   getArmStopPerformance,
+  getLiftProfilePerformance,
+  getLiveTelemetry,
   getStaticPerformance,
   getTargetPerformance,
   minimumMoveDuration,
@@ -570,6 +571,10 @@ export default function Home() {
     () => getTargetPerformance(physics, timingScenario.liftOnlyTimeS),
     [physics, timingScenario.liftOnlyTimeS],
   );
+  const liftProfilePerformance = useMemo(
+    () => getLiftProfilePerformance(physics, timingScenario.liftOnlyTimeS),
+    [physics, timingScenario.liftOnlyTimeS],
+  );
   const armStopResults = useMemo(
     () => getArmStopPerformance(physics, armStopScenario),
     [physics, armStopScenario],
@@ -658,6 +663,15 @@ export default function Home() {
           ) {
             savedValues.armCenterOfMassIn = 6.5;
             savedValues.payloadMassLb = 0;
+          }
+          // Correct both known earlier example weights to the team's measured
+          // 8 lb moving lift while preserving other customized values.
+          if (
+            (savedValues.movingWeightLb === 2 || savedValues.movingWeightLb === 6)
+            && savedValues.counterbalanceLb === 2
+            && savedValues.frictionLb === 0.5
+          ) {
+            savedValues.movingWeightLb = 8;
           }
           setPhysics({ ...DEFAULT_PHYSICS, ...savedValues });
         } catch {
@@ -883,12 +897,22 @@ home ${returnTime}`);
               <div><span>Lift winch output</span><strong>{formatValue(telemetry.liftWinchRpm, 0)}</strong><small>RPM</small></div>
               <div><span>Arm output</span><strong>{formatValue(telemetry.armOutputRpm, 1)}</strong><small>RPM</small></div>
               <div><span>Torque load</span><strong>{formatValue(telemetry.motorLoadFraction * 100, 0)}</strong><small>% of stall</small></div>
-              <div><span>Lift force</span><strong>{formatValue(telemetry.requiredLiftForceLb, 1)}</strong><small>lbf required</small></div>
+              <div><span>Lift net gravity</span><strong>{formatValue(telemetry.liftGravityForceLb, 1)}</strong><small>lbf after counterbalance</small></div>
+              <div><span>Lift friction</span><strong>{formatValue(telemetry.liftFrictionForceLb, 1)}</strong><small>lbf signed</small></div>
+              <div><span>Lift acceleration force</span><strong>{formatValue(telemetry.liftAccelerationForceLb, 1)}</strong><small>lbf signed · ma</small></div>
+              <div><span>Total lift force</span><strong>{formatValue(telemetry.requiredLiftForceLb, 1)}</strong><small>lbf signed</small></div>
               <div><span>Stall force</span><strong>{formatValue(telemetry.stallLiftForceLb, 1)}</strong><small>lbf modeled</small></div>
-              <div><span>Mechanical output</span><strong>{formatValue(telemetry.mechanicalPowerW, 1)}</strong><small>of {formatValue(staticPerformance.availableMechanicalW, 0)} W rated</small></div>
-              <div><span>Electrical draw</span><strong>{formatValue(telemetry.electricalPowerW, 1)}</strong><small>W estimated</small></div>
+              <div><span>Lift torque · shared</span><strong>{formatValue(telemetry.liftMotorTorqueSharedNm, 3)}</strong><small>N·m across both groups</small></div>
+              <div><span>Lift torque / group</span><strong>{formatValue(telemetry.liftMotorTorquePerGroupNm, 3)}</strong><small>N·m each · A and B</small></div>
+              <div><span>Lift torque / motor</span><strong>{formatValue(telemetry.liftMotorTorquePerMotorNm, 3)}</strong><small>N·m each</small></div>
+              <div><span>Lift output power</span><strong>{formatValue(telemetry.liftOutputPowerW, 1)}</strong><small>W signed · Fv</small></div>
+              <div><span>Arm output power</span><strong>{formatValue(telemetry.armOutputPowerW, 1)}</strong><small>W signed · τω</small></div>
+              <div><span>Motor shaft demand</span><strong>{formatValue(telemetry.mechanicalPowerW, 1)}</strong><small>W total of {formatValue(staticPerformance.availableMechanicalW, 0)} W rated</small></div>
+              <div><span>Electrical power total</span><strong>{formatValue(telemetry.electricalPowerW, 1)}</strong><small>W across all motors</small></div>
+              <div><span>Electrical power / motor</span><strong>{formatValue(telemetry.electricalPowerPerMotorW, 1)}</strong><small>W each</small></div>
               <div><span>Current / motor</span><strong>{formatValue(telemetry.currentPerMotorA, 2)}</strong><small>A estimated</small></div>
               <div><span>Lift speed</span><strong>{formatValue(telemetry.liftSpeedInS, 1)}</strong><small>in/s</small></div>
+              <div><span>Lift acceleration</span><strong>{formatValue(telemetry.liftAccelerationInS2, 1)}</strong><small>in/s² signed</small></div>
               <div><span>Arm gravity torque</span><strong>{formatValue(telemetry.armGravityTorqueInLb, 2)}</strong><small>lbf·in signed</small></div>
               <div><span>Arm acceleration torque</span><strong>{formatValue(telemetry.armAccelerationTorqueInLb, 2)}</strong><small>lbf·in from Iα</small></div>
               <div><span>Arm friction torque</span><strong>{formatValue(telemetry.armFrictionTorqueInLb, 2)}</strong><small>lbf·in signed</small></div>
@@ -1134,10 +1158,23 @@ home ${returnTime}`);
                 <div><dt>Stop time</dt><dd>Time allowed to decelerate from the starting speed to zero. A shorter stop requires more inertia torque.</dd></div>
                 <div><dt>Effective motor:arm reduction</dt><dd>Total motor-shaft-to-arm ratio used only by this stop check. Unlike the timing calculator’s ratio label, this value changes the torque math.</dd></div>
                 <div><dt>PID braking peak multiplier</dt><dd>Editable allowance for a PID controller commanding more than the average constant-deceleration torque. Use 1.00× to remove this allowance.</dd></div>
-                <div><dt>Ideal shared total</dt><dd>Horizontal holding torque plus average braking torque after gearing, before efficiency loss. This is shared by all arm motors—not required from each motor.</dd></div>
+                <div><dt>Ideal shared total</dt><dd>Horizontal holding torque plus average braking torque after gearing, before efficiency loss. Motor Groups A and B each carry half.</dd></div>
                 <div><dt>Adjusted peak total</dt><dd>Holding torque plus PID-adjusted braking torque, divided by the hardware model’s mechanism efficiency.</dd></div>
+                <div><dt>Per-group torque</dt><dd>Combined drive torque divided evenly between Group A and Group B, as Colin clarified.</dd></div>
                 <div><dt>Peak per motor</dt><dd>Adjusted shared total divided by the modeled total motor count.</dd></div>
                 <div><dt>Stall load</dt><dd>Peak per-motor torque divided by the selected cartridge’s modeled stall torque.</dd></div>
+              </dl>
+            </div>
+
+            <div className="guide-section">
+              <h4>Requested lift acceleration / deceleration</h4>
+              <dl className="guide-definition-grid">
+                <div><dt>Profile source</dt><dd>Uses the editable full-lift target time and the same smooth motion profile as the animation.</dd></div>
+                <div><dt>Moving mass</dt><dd>The corrected default is 8 lb. This full mass is used in <code>ma</code>; counterbalance only offsets gravity.</dd></div>
+                <div><dt>Accelerating force / torque</dt><dd>Net gravity, upward friction, and positive <code>ma</code> are added at the start of the lift.</dd></div>
+                <div><dt>Decelerating force / torque</dt><dd>Negative <code>ma</code> is applied near the top. A negative result means the motors must brake while gravity helps slow the lift.</dd></div>
+                <div><dt>Peak power</dt><dd>The full profile is sampled to find peak lift-output, motor-shaft, electrical, and per-motor values.</dd></div>
+                <div><dt>Physics-limit warning</dt><dd>If the requested time is impossible, the check still shows its requested peaks while the animation automatically uses a longer, safer duration.</dd></div>
               </dl>
             </div>
 
@@ -1173,9 +1210,11 @@ home ${returnTime}`);
                 <div><dt>Lift winch output</dt><dd>Winch RPM after the external reduction.</dd></div>
                 <div><dt>Arm output</dt><dd>End-effector RPM after spool-diameter conversion.</dd></div>
                 <div><dt>Torque load</dt><dd>Worst motor torque as a percentage of stall torque.</dd></div>
-                <div><dt>Required / stall force</dt><dd>Instantaneous lift demand compared with the model’s maximum output force.</dd></div>
-                <div><dt>Mechanical watts</dt><dd>Estimated shaft power needed for lift and arm work, including mechanism losses.</dd></div>
-                <div><dt>Electrical watts</dt><dd>Estimated total motor electrical draw, capped at the V5-reported 22 W per motor range.</dd></div>
+                <div><dt>Lift gravity / friction / acceleration force</dt><dd>Signed components of the live lift demand. Acceleration is calculated from the entered moving mass and the animation’s current acceleration.</dd></div>
+                <div><dt>Lift shared torque</dt><dd>Combined motor-side lift torque across both groups. The per-group value is half, and the per-motor value divides it by total motor count.</dd></div>
+                <div><dt>Lift / arm output watts</dt><dd>Signed mechanical power at each mechanism. Negative indicates braking or energy flowing back toward the motors.</dd></div>
+                <div><dt>Motor shaft watts</dt><dd>Total positive motor-side mechanical demand after mechanism losses.</dd></div>
+                <div><dt>Electrical watts</dt><dd>Estimated total electrical power across all motors, plus a separate per-motor value. Watts measure power, not current.</dd></div>
                 <div><dt>Current per motor</dt><dd>Approximate current from 0.15 A at no load toward 2.5 A near stall.</dd></div>
                 <div><dt>Arm gravity torque</dt><dd>Signed holding torque. It is near zero vertically and reaches maximum magnitude when horizontal.</dd></div>
                 <div><dt>Arm acceleration torque</dt><dd>Signed dynamic torque calculated from the modeled moment of inertia and angular acceleration.</dd></div>
@@ -1201,6 +1240,10 @@ home ${returnTime}`);
                 <div><code>B = −lift turns + arm turns</code><span>Differential command for Motor Group B.</span></div>
                 <div><code>effective load = max(weight − counterbalance, 0) + friction</code><span>Static linear load used for the lift torque estimate.</span></div>
                 <div><code>Frequired = Fgravity + Ffriction + ma</code><span>Instantaneous lift force; unit conversions are applied internally.</span></div>
+                <div><code>τlift,shared = Frequired r / (Rη)</code><span>Combined reflected lift torque shared across both motor groups.</span></div>
+                <div><code>τlift,group = τlift,shared / 2</code><span>Each differential motor group carries one-half of the lift torque.</span></div>
+                <div><code>τlift,motor = τlift,shared / motor count</code><span>Lift torque assigned to each individual motor.</span></div>
+                <div><code>Plift = Frequired v</code><span>Signed lift mechanism power; negative values indicate braking.</span></div>
                 <div><code>Iarm = marm rcg² + mpayload rpayload²</code><span>Point-mass moment-of-inertia estimate around the arm pivot.</span></div>
                 <div><code>τgravity = (Warm rcg + Wpayload rpayload) sin(θ)</code><span>Signed arm holding torque: zero vertically and maximum horizontally.</span></div>
                 <div><code>τacceleration = Iarm α</code><span>Additional signed torque needed to angularly accelerate the arm and payload.</span></div>
@@ -1220,9 +1263,10 @@ home ${returnTime}`);
                 <div><code>Tsplit = Tlift / s</code><span>Ideal full-lift time when only share <code>s</code> goes to lifting.</span></div>
                 <div><code>arm RPM = (θref / 360Tref) × 60 × (1 − s)</code><span>Arm output during the ideal power split.</span></div>
                 <div><code>arm revolutions = arm RPM × Tsplit / 60</code><span>Arm travel completed while the split lift reaches 100%.</span></div>
-                <div><code>Pmech = (|Fv| + |τarmω|) / ηmechanism</code><span>Estimated mechanical demand for lift plus the dynamic arm load.</span></div>
+                <div><code>Pmech = (|Fv| + |τarmω|) / ηmechanism</code><span>Total positive motor-shaft demand for lift plus the dynamic arm load.</span></div>
                 <div><code>Iper-motor = 0.15 + (2.5 − 0.15) × load fraction</code><span>Approximate V5 motor current, clamped between no-load and stall.</span></div>
-                <div><code>Pelectrical ≈ max(Pmech / ηmotor, torque-based estimate)</code><span>Electrical estimate, capped at 22 W per motor to match the reported V5 range.</span></div>
+                <div><code>Pelectrical,total ≈ max(Pmech / ηmotor, torque-based estimate)</code><span>Total electrical power estimate, capped at 22 W times motor count.</span></div>
+                <div><code>Pelectrical,motor = Pelectrical,total / motor count</code><span>Electrical watts assigned to each motor; current remains a separate amp estimate.</span></div>
               </div>
             </div>
 
@@ -1454,7 +1498,7 @@ home ${returnTime}`);
             </div>
 
             <div className="arm-stop-equation-callout">
-              <span>Ideal motor-side total · Colin preset ≈ 0.500 N·m</span>
+              <span>Combined reflected drive torque · Colin preset ≈ 0.500 N·m</span>
               <strong>
                 {formatValue(armStopResults.idealHoldingSharedNm, 3)} + {formatValue(armStopResults.idealBrakingSharedNm, 3)} ≈ {formatValue(
                   Math.round(armStopResults.idealHoldingSharedNm * 1000) / 1000
@@ -1462,14 +1506,18 @@ home ${returnTime}`);
                   3,
                 )} N·m
               </strong>
-              <p>That is shared by all {armStopResults.totalMotors} modeled motors. It is not {formatValue(armStopResults.idealCombinedSharedNm, 3)} N·m per motor.</p>
+              <p>
+                Both motor groups split this evenly: Group A ≈ {formatValue(armStopResults.idealCombinedPerGroupNm, 3)} N·m and Group B ≈ {formatValue(armStopResults.idealCombinedPerGroupNm, 3)} N·m. Each group’s {formatValue(armStopResults.motorsPerGroup, 0)} motors then share that half.
+              </p>
             </div>
 
             <div className="timing-result-grid arm-stop-result-grid">
               <div><span>Ideal hold · shared</span><strong>{formatValue(armStopResults.idealHoldingSharedNm, 3)} N·m</strong></div>
               <div><span>Ideal brake · shared</span><strong>{formatValue(armStopResults.idealBrakingSharedNm, 3)} N·m</strong></div>
               <div className="result-accent"><span>Ideal combined · shared</span><strong>{formatValue(armStopResults.idealCombinedSharedNm, 3)} N·m</strong></div>
+              <div><span>Ideal torque / group</span><strong>{formatValue(armStopResults.idealCombinedPerGroupNm, 3)} N·m each</strong></div>
               <div className="result-accent"><span>PID/loss peak · shared</span><strong>{formatValue(armStopResults.lossAdjustedPeakSharedNm, 3)} N·m</strong></div>
+              <div><span>Adjusted peak / group</span><strong>{formatValue(armStopResults.lossAdjustedPeakPerGroupNm, 3)} N·m each</strong></div>
               <div><span>Adjusted peak per motor</span><strong>{formatValue(armStopResults.lossAdjustedPeakPerMotorNm, 3)} N·m</strong></div>
               <div><span>Per-motor stall load</span><strong>{formatValue(armStopResults.perMotorStallLoadFraction * 100, 1)}%</strong></div>
               <div><span>Starting angular speed</span><strong>{formatValue(armStopResults.startAngularSpeedRadS, 2)} rad/s</strong></div>
@@ -1479,7 +1527,7 @@ home ${returnTime}`);
             <div className={`arm-stop-status ${armStopResults.withinStallTorque ? "good" : "bad"}`}>
               <strong>{armStopResults.withinStallTorque ? "Adjusted peak stays below modeled stall torque" : "Adjusted peak exceeds modeled stall torque"}</strong>
               <span>
-                {formatValue(armStopResults.lossAdjustedPeakPerMotorNm, 3)} N·m per motor versus {formatValue(armStopResults.stallTorquePerMotorNm, 3)} N·m stall per motor · {formatValue(physics.mechanismEfficiency * 100, 0)}% mechanism efficiency
+                {formatValue(armStopResults.lossAdjustedPeakSharedNm, 3)} N·m total → {formatValue(armStopResults.lossAdjustedPeakPerGroupNm, 3)} N·m per group → {formatValue(armStopResults.lossAdjustedPeakPerMotorNm, 3)} N·m per motor versus {formatValue(armStopResults.stallTorquePerMotorNm, 3)} N·m stall per motor
               </span>
             </div>
 
@@ -1535,6 +1583,43 @@ home ${returnTime}`);
                 {formatValue(targetPerformance.availableMotorRpmAtPeakSpeed, 0)} rpm available at peak speed · {formatValue(targetPerformance.requiredPeakForceLb, 1)} lbf peak force · {formatValue(targetPerformance.motorSpeedUtilization * 100, 0)}% speed load
               </span>
             </div>
+
+            <section className="lift-dynamics-card" aria-labelledby="lift-dynamics-title">
+              <div className="lift-dynamics-heading">
+                <div>
+                  <span className="eyebrow">LIFT ACCEL / DECEL</span>
+                  <h4 id="lift-dynamics-title">Requested 0→100 torque and power</h4>
+                </div>
+                <span>{formatValue(physics.movingWeightLb, 1)} lb moving · {formatValue(liftProfilePerformance.targetTimeS, 3)}s</span>
+              </div>
+
+              <div className="timing-result-grid lift-dynamics-grid">
+                <div><span>Peak acceleration</span><strong>±{formatValue(liftProfilePerformance.peakAccelerationInS2, 1)} in/s²</strong></div>
+                <div><span>Accelerating total force</span><strong>{formatValue(liftProfilePerformance.acceleratingForceLb, 1)} lbf</strong></div>
+                <div><span>Decelerating total force</span><strong>{formatValue(liftProfilePerformance.deceleratingForceLb, 1)} lbf</strong></div>
+                <div className="result-accent"><span>Accel torque · shared</span><strong>{formatValue(liftProfilePerformance.acceleratingSharedTorqueNm, 3)} N·m</strong></div>
+                <div className="result-accent"><span>Decel torque · shared</span><strong>{formatValue(liftProfilePerformance.deceleratingSharedTorqueNm, 3)} N·m</strong></div>
+                <div><span>Peak torque / group</span><strong>{formatValue(liftProfilePerformance.peakPerGroupTorqueNm, 3)} N·m</strong></div>
+                <div><span>Peak torque / motor</span><strong>{formatValue(liftProfilePerformance.peakPerMotorTorqueNm, 3)} N·m</strong></div>
+                <div><span>Peak torque load</span><strong>{formatValue(liftProfilePerformance.peakTorqueLoadFraction * 100, 1)}%</strong></div>
+                <div><span>Peak lift output</span><strong>{formatValue(liftProfilePerformance.peakLiftOutputPowerW, 1)} W</strong></div>
+                <div><span>Peak motor shaft demand</span><strong>{formatValue(liftProfilePerformance.peakMotorMechanicalPowerW, 1)} W</strong></div>
+                <div className="result-accent"><span>Peak electrical · total</span><strong>{formatValue(liftProfilePerformance.peakElectricalPowerW, 1)} W</strong></div>
+                <div><span>Electrical / motor</span><strong>{formatValue(liftProfilePerformance.peakElectricalPowerPerMotorW, 1)} W each</strong></div>
+                <div><span>Peak current / motor</span><strong>{formatValue(liftProfilePerformance.peakCurrentPerMotorA, 2)} A</strong></div>
+              </div>
+
+              <div className="power-clarifier">
+                <strong>Watts are power; amps are current.</strong>
+                <span>
+                  {formatValue(liftProfilePerformance.peakElectricalPowerW, 1)} W is the estimated total across all {liftProfilePerformance.totalMotors} motors ({formatValue(liftProfilePerformance.peakElectricalPowerPerMotorW, 1)} W each). The separate current estimate is {formatValue(liftProfilePerformance.peakCurrentPerMotorA, 2)} A per motor.
+                </span>
+              </div>
+
+              <p className="lift-dynamics-note">
+                Lift torque is shared evenly between Motor Group A and Motor Group B, then among the {formatValue(liftProfilePerformance.motorsPerGroup, 0)} motors in each group. Positive values drive upward; a negative deceleration value means gravity is helping slow the lift and the motors must brake or resist it. {targetPerformance.feasible ? "These peaks describe the requested profile." : "The requested profile exceeds the current model, so Physics-limit animation will use a longer move with lower real peaks."}
+              </p>
+            </section>
 
             <div className="model-inputs">
               <label>
