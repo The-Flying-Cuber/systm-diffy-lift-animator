@@ -1,6 +1,6 @@
 # SYSTM Diffy Lift Animator
 
-[**Open the web tool →**](https://systmvexu.github.io/systm-diffy-lift-animator/)
+[**Open the web tool →**](https://the-flying-cuber.github.io/systm-diffy-lift-animator/)
 
 An interactive browser-based tool for visualizing, programming, and estimating
 the performance of a continuous differential lift.
