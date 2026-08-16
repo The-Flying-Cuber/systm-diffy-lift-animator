@@ -16,7 +16,11 @@ export type PhysicsSettings = {
   frictionLb: number;
   mechanismEfficiency: number;
   motorEfficiency: number;
-  armLoadTorqueInLb: number;
+  armMassLb: number;
+  armCenterOfMassIn: number;
+  payloadMassLb: number;
+  payloadDistanceIn: number;
+  armFrictionTorqueInLb: number;
 };
 
 export type StaticPerformance = {
@@ -74,7 +78,58 @@ export type LiveTelemetry = {
   currentPerMotorA: number;
   liftSpeedInS: number;
   liftAccelerationInS2: number;
+  armMomentOfInertiaLbIn2: number;
+  armGravityTorqueInLb: number;
+  armAccelerationTorqueInLb: number;
+  armFrictionTorqueInLb: number;
+  requiredArmTorqueInLb: number;
   feasible: boolean;
+};
+
+export type ArmDynamics = {
+  momentOfInertiaKgM2: number;
+  momentOfInertiaLbIn2: number;
+  maximumGravityTorqueInLb: number;
+  gravityTorqueNm: number;
+  gravityTorqueInLb: number;
+  accelerationTorqueNm: number;
+  accelerationTorqueInLb: number;
+  frictionTorqueNm: number;
+  frictionTorqueInLb: number;
+  requiredTorqueNm: number;
+  requiredTorqueInLb: number;
+};
+
+export type ArmStopScenario = {
+  startRpm: number;
+  stopTimeS: number;
+  effectiveReduction: number;
+  pidPeakMultiplier: number;
+};
+
+export type ArmStopPerformance = {
+  totalMotors: number;
+  stallTorquePerMotorNm: number;
+  startAngularSpeedRadS: number;
+  averageAngularDecelerationRadS2: number;
+  momentOfInertiaKgM2: number;
+  maximumGravityOutputTorqueNm: number;
+  brakingOutputTorqueNm: number;
+  idealHoldingSharedNm: number;
+  idealBrakingSharedNm: number;
+  idealCombinedSharedNm: number;
+  pidAdjustedSharedNm: number;
+  lossAdjustedPeakSharedNm: number;
+  lossAdjustedPeakPerMotorNm: number;
+  perMotorStallLoadFraction: number;
+  withinStallTorque: boolean;
+};
+
+export const COLIN_ARM_STOP_SCENARIO: ArmStopScenario = {
+  startRpm: 97.5,
+  stopTimeS: 0.1,
+  effectiveReduction: 4,
+  pidPeakMultiplier: 1.25,
 };
 
 export const DEFAULT_PHYSICS: PhysicsSettings = {
@@ -90,10 +145,19 @@ export const DEFAULT_PHYSICS: PhysicsSettings = {
   frictionLb: 0.5,
   mechanismEfficiency: 0.85,
   motorEfficiency: 0.7,
-  armLoadTorqueInLb: 0.5,
+  // These defaults reproduce Colin's two hand checks: 6.5 lbf·in maximum
+  // horizontal gravity torque and 42.25 lb·in² point-mass inertia. With a
+  // 97.5 RPM arm stopped in 0.1 s through 4:1 gearing, they produce about
+  // 0.184 N·m holding + 0.316 N·m braking = 0.500 N·m shared by all motors.
+  armMassLb: 1,
+  armCenterOfMassIn: 6.5,
+  payloadMassLb: 0,
+  payloadDistanceIn: 6,
+  armFrictionTorqueInLb: 0.5,
 };
 
 const INCH_TO_METER = 0.0254;
+const POUND_MASS_TO_KG = 0.45359237;
 const POUND_FORCE_TO_NEWTON = 4.4482216153;
 const IN_LB_TO_NM = 0.112984829;
 const PEAK_PROFILE_VELOCITY = 1.5;
@@ -242,6 +306,113 @@ export function differentialTurns(from: Pose, to: Pose, settings: PhysicsSetting
   };
 }
 
+export function getArmDynamics(
+  settings: PhysicsSettings,
+  motion: Pick<MotionState, "pose" | "armVelocityDegS" | "armAccelerationDegS2">,
+): ArmDynamics {
+  const armMassLb = Math.max(0, settings.armMassLb);
+  const armCenterOfMassIn = Math.max(0, settings.armCenterOfMassIn);
+  const payloadMassLb = Math.max(0, settings.payloadMassLb);
+  const payloadDistanceIn = Math.max(0, settings.payloadDistanceIn);
+
+  // Colin's I = mr² approximation treats the arm and payload as point masses
+  // located at their entered radii from the pivot.
+  const momentOfInertiaLbIn2 = armMassLb * armCenterOfMassIn ** 2
+    + payloadMassLb * payloadDistanceIn ** 2;
+  const momentOfInertiaKgM2 = momentOfInertiaLbIn2
+    * POUND_MASS_TO_KG * INCH_TO_METER ** 2;
+
+  // The visual and command system define 0° as straight up. Gravity torque is
+  // therefore zero at the top/bottom and maximum at ±90° (horizontal).
+  const maximumGravityTorqueInLb = armMassLb * armCenterOfMassIn
+    + payloadMassLb * payloadDistanceIn;
+  const angleFromVerticalRad = motion.pose.arm * Math.PI / 180;
+  const gravityTorqueInLb = maximumGravityTorqueInLb * Math.sin(angleFromVerticalRad);
+  const gravityTorqueNm = gravityTorqueInLb * IN_LB_TO_NM;
+
+  const angularAccelerationRadS2 = motion.armAccelerationDegS2 * Math.PI / 180;
+  const accelerationTorqueNm = momentOfInertiaKgM2 * angularAccelerationRadS2;
+  const accelerationTorqueInLb = accelerationTorqueNm / IN_LB_TO_NM;
+
+  const motionDirection = Math.abs(motion.armVelocityDegS) > 0.001
+    ? Math.sign(motion.armVelocityDegS)
+    : Math.abs(motion.armAccelerationDegS2) > 0.001
+      ? Math.sign(motion.armAccelerationDegS2)
+      : 0;
+  const frictionTorqueInLb = Math.max(0, settings.armFrictionTorqueInLb) * motionDirection;
+  const frictionTorqueNm = frictionTorqueInLb * IN_LB_TO_NM;
+  const requiredTorqueNm = gravityTorqueNm + accelerationTorqueNm + frictionTorqueNm;
+
+  return {
+    momentOfInertiaKgM2,
+    momentOfInertiaLbIn2,
+    maximumGravityTorqueInLb,
+    gravityTorqueNm,
+    gravityTorqueInLb,
+    accelerationTorqueNm,
+    accelerationTorqueInLb,
+    frictionTorqueNm,
+    frictionTorqueInLb,
+    requiredTorqueNm,
+    requiredTorqueInLb: requiredTorqueNm / IN_LB_TO_NM,
+  };
+}
+
+export function getArmStopPerformance(
+  settings: PhysicsSettings,
+  scenario: ArmStopScenario,
+): ArmStopPerformance {
+  const performance = getStaticPerformance(settings);
+  const effectiveReduction = safe(scenario.effectiveReduction, 1);
+  const stopTimeS = safe(scenario.stopTimeS, 0.1);
+  const startRpm = Math.max(0, finite(scenario.startRpm));
+  const pidPeakMultiplier = Math.max(1, finite(scenario.pidPeakMultiplier, 1));
+  const mechanismEfficiency = clamp(settings.mechanismEfficiency, 0.3, 1);
+
+  const horizontalArm = getArmDynamics(settings, {
+    pose: { lift: 0, arm: 90 },
+    armVelocityDegS: 0,
+    armAccelerationDegS2: 0,
+  });
+  const startAngularSpeedRadS = startRpm * 2 * Math.PI / 60;
+  const averageAngularDecelerationRadS2 = startAngularSpeedRadS / stopTimeS;
+  const maximumGravityOutputTorqueNm = Math.abs(horizontalArm.gravityTorqueNm);
+  const brakingOutputTorqueNm = horizontalArm.momentOfInertiaKgM2
+    * averageAngularDecelerationRadS2;
+
+  // These three ideal values are motor-side totals shared by every arm motor.
+  // They intentionally exclude efficiency and PID overshoot so Colin's hand
+  // calculation remains visible and directly comparable.
+  const idealHoldingSharedNm = maximumGravityOutputTorqueNm / effectiveReduction;
+  const idealBrakingSharedNm = brakingOutputTorqueNm / effectiveReduction;
+  const idealCombinedSharedNm = idealHoldingSharedNm + idealBrakingSharedNm;
+  const pidAdjustedSharedNm = idealHoldingSharedNm
+    + idealBrakingSharedNm * pidPeakMultiplier;
+  const lossAdjustedPeakSharedNm = pidAdjustedSharedNm / mechanismEfficiency;
+  const lossAdjustedPeakPerMotorNm = lossAdjustedPeakSharedNm / performance.totalMotors;
+  const perMotorStallLoadFraction = performance.stallTorquePerMotorNm > 0
+    ? lossAdjustedPeakPerMotorNm / performance.stallTorquePerMotorNm
+    : Number.POSITIVE_INFINITY;
+
+  return {
+    totalMotors: performance.totalMotors,
+    stallTorquePerMotorNm: performance.stallTorquePerMotorNm,
+    startAngularSpeedRadS,
+    averageAngularDecelerationRadS2,
+    momentOfInertiaKgM2: horizontalArm.momentOfInertiaKgM2,
+    maximumGravityOutputTorqueNm,
+    brakingOutputTorqueNm,
+    idealHoldingSharedNm,
+    idealBrakingSharedNm,
+    idealCombinedSharedNm,
+    pidAdjustedSharedNm,
+    lossAdjustedPeakSharedNm,
+    lossAdjustedPeakPerMotorNm,
+    perMotorStallLoadFraction,
+    withinStallTorque: perMotorStallLoadFraction < 1,
+  };
+}
+
 export function minimumMoveDuration(from: Pose, to: Pose, settings: PhysicsSettings) {
   const performance = getStaticPerformance(settings);
   const turns = differentialTurns(from, to, settings);
@@ -249,7 +420,48 @@ export function minimumMoveDuration(from: Pose, to: Pose, settings: PhysicsSetti
 
   if (largestMotorMove < 0.000001) return 0;
   if (performance.loadedMotorRpm < 0.01) return Number.POSITIVE_INFINITY;
-  return largestMotorMove * 60 * PEAK_PROFILE_VELOCITY / performance.loadedMotorRpm;
+  const kinematicMinimum = largestMotorMove * 60 * PEAK_PROFILE_VELOCITY
+    / performance.loadedMotorRpm;
+
+  const liftDelta = to.lift - from.lift;
+  const armDelta = to.arm - from.arm;
+  const fitsDuration = (duration: number) => {
+    // Sample the same smoothstep trajectory used by the animation. This makes
+    // the physics limiter account for arm gravity and Iα, not RPM alone.
+    for (let index = 0; index <= 40; index += 1) {
+      const normalized = index / 40;
+      const progress = normalized * normalized * (3 - 2 * normalized);
+      const velocityScale = 6 * normalized * (1 - normalized) / duration;
+      const accelerationScale = (6 - 12 * normalized) / (duration * duration);
+      const telemetry = getLiveTelemetry(settings, {
+        pose: {
+          lift: from.lift + liftDelta * progress,
+          arm: from.arm + armDelta * progress,
+        },
+        liftVelocityPctS: liftDelta * velocityScale,
+        liftAccelerationPctS2: liftDelta * accelerationScale,
+        armVelocityDegS: armDelta * velocityScale,
+        armAccelerationDegS2: armDelta * accelerationScale,
+      });
+      if (!telemetry.feasible) return false;
+    }
+    return true;
+  };
+
+  let lower = Math.max(0.05, kinematicMinimum);
+  if (fitsDuration(lower)) return lower;
+
+  let upper = Math.max(0.1, lower * 1.5);
+  while (upper < 30 && !fitsDuration(upper)) upper *= 1.5;
+  upper = Math.min(30, upper);
+  if (!fitsDuration(upper)) return Number.POSITIVE_INFINITY;
+
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    const middle = (lower + upper) / 2;
+    if (fitsDuration(middle)) upper = middle;
+    else lower = middle;
+  }
+  return upper;
 }
 
 export function getLiveTelemetry(
@@ -287,12 +499,9 @@ export function getLiveTelemetry(
 
   const liftTorqueTotalNm = requiredLiftForceN * rigging * motorRadiusM
     / (reduction * mechanismEfficiency);
-  const armTorqueOutputNm = Math.max(0, settings.armLoadTorqueInLb) * IN_LB_TO_NM;
-  const armDirection = Math.abs(motion.armVelocityDegS) > 0.001
-    ? Math.sign(motion.armVelocityDegS)
-    : 0;
-  const armTorquePerMotorNm = armTorqueOutputNm * (motorDiameter / armDiameter)
-    / (reduction * mechanismEfficiency * totalMotors) * armDirection;
+  const armDynamics = getArmDynamics(settings, motion);
+  const armTorquePerMotorNm = armDynamics.requiredTorqueNm * (motorDiameter / armDiameter)
+    / (reduction * mechanismEfficiency * totalMotors);
   const liftTorquePerMotorNm = liftTorqueTotalNm / totalMotors;
   const groupATorque = liftTorquePerMotorNm + armTorquePerMotorNm;
   const groupBTorque = -liftTorquePerMotorNm + armTorquePerMotorNm;
@@ -300,7 +509,9 @@ export function getLiveTelemetry(
   const motorLoadFraction = worstMotorTorque / performance.stallTorquePerMotorNm;
 
   const liftOutputPowerW = requiredLiftForceN * liftSpeedInS * INCH_TO_METER;
-  const armOutputPowerW = armTorqueOutputNm * Math.abs(motion.armVelocityDegS) * Math.PI / 180;
+  const armOutputPowerW = Math.abs(
+    armDynamics.requiredTorqueNm * motion.armVelocityDegS * Math.PI / 180,
+  );
   const mechanicalPowerW = (Math.abs(liftOutputPowerW) + armOutputPowerW) / mechanismEfficiency;
   const modeledElectricalFromWork = mechanicalPowerW / motorEfficiency;
   const currentPerMotorA = V5_NO_LOAD_CURRENT_A
@@ -312,8 +523,9 @@ export function getLiveTelemetry(
     totalMotors * 22,
     Math.max(modeledElectricalFromWork, torqueBasedElectricalW),
   );
-  const speedUtilization = performance.loadedMotorRpm > 0
-    ? requestedMotorRpm / performance.loadedMotorRpm
+  const availableMotorRpm = settings.cartridgeRpm * estimatedSpeedFraction(motorLoadFraction);
+  const speedUtilization = availableMotorRpm > 0
+    ? requestedMotorRpm / availableMotorRpm
     : Number.POSITIVE_INFINITY;
 
   return {
@@ -321,7 +533,7 @@ export function getLiveTelemetry(
     motorBRpm,
     liftWinchRpm,
     armOutputRpm,
-    availableMotorRpm: performance.loadedMotorRpm,
+    availableMotorRpm,
     requestedMotorRpm,
     speedUtilization,
     requiredLiftForceLb,
@@ -332,6 +544,11 @@ export function getLiveTelemetry(
     currentPerMotorA,
     liftSpeedInS,
     liftAccelerationInS2,
+    armMomentOfInertiaLbIn2: armDynamics.momentOfInertiaLbIn2,
+    armGravityTorqueInLb: armDynamics.gravityTorqueInLb,
+    armAccelerationTorqueInLb: armDynamics.accelerationTorqueInLb,
+    armFrictionTorqueInLb: armDynamics.frictionTorqueInLb,
+    requiredArmTorqueInLb: armDynamics.requiredTorqueInLb,
     feasible: speedUtilization <= 1.02 && motorLoadFraction < 1,
   };
 }

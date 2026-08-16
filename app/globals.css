@@ -2402,6 +2402,104 @@ body {
   background: #131313;
 }
 
+.arm-stop-calculator {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #303030;
+  border-radius: 14px;
+  background: #101010;
+  color: white;
+}
+
+.arm-stop-title p {
+  max-width: 330px;
+}
+
+.arm-stop-input-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.arm-stop-equation-callout {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #47412b;
+  border-left: 3px solid var(--yellow);
+  border-radius: 0 9px 9px 0;
+  background: #171611;
+}
+
+.arm-stop-equation-callout span,
+.arm-stop-equation-callout strong {
+  display: block;
+}
+
+.arm-stop-equation-callout span {
+  color: #9b9b91;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.arm-stop-equation-callout strong {
+  margin-top: 6px;
+  color: var(--yellow);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.arm-stop-equation-callout p {
+  margin: 6px 0 0;
+  color: #cacac3;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.arm-stop-result-grid {
+  margin-top: 9px;
+}
+
+.arm-stop-status {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  padding: 10px 11px;
+  border: 1px solid #303030;
+  border-radius: 8px;
+  background: #151515;
+}
+
+.arm-stop-status.good {
+  border-color: #3d482c;
+}
+
+.arm-stop-status.bad {
+  border-color: #564c2c;
+  background: #171611;
+}
+
+.arm-stop-status strong {
+  color: var(--yellow);
+  font-size: 9px;
+}
+
+.arm-stop-status span {
+  color: #969696;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.arm-stop-note {
+  margin: 8px 0 0;
+  color: #8b8b8b;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
 @media (max-width: 1120px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -2503,7 +2601,12 @@ body {
 
   .timing-primary-grid,
   .timing-secondary-grid,
+  .arm-stop-input-grid,
   .scenario-model-check {
+    grid-template-columns: 1fr;
+  }
+
+  .arm-stop-result-grid {
     grid-template-columns: 1fr;
   }
 

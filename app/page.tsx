@@ -3,14 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  COLIN_ARM_STOP_SCENARIO,
   DEFAULT_PHYSICS,
   clamp,
   differentialTurns,
   finite,
   getLiveTelemetry,
+  getArmStopPerformance,
   getStaticPerformance,
   getTargetPerformance,
   minimumMoveDuration,
+  type ArmStopScenario,
   type PhysicsSettings,
   type Pose,
 } from "./physics";
@@ -541,6 +544,7 @@ export default function Home() {
   const [physics, setPhysics] = useState<PhysicsSettings>(DEFAULT_PHYSICS);
   const [limitToPhysics, setLimitToPhysics] = useState(true);
   const [timingScenario, setTimingScenario] = useState<TimingScenario>(COLIN_TIMING_SCENARIO);
+  const [armStopScenario, setArmStopScenario] = useState<ArmStopScenario>(COLIN_ARM_STOP_SCENARIO);
   const [guideHost, setGuideHost] = useState<HTMLDivElement | null>(null);
   const elapsedRef = useRef(0);
   const storageLoadedRef = useRef(false);
@@ -565,6 +569,10 @@ export default function Home() {
   const targetPerformance = useMemo(
     () => getTargetPerformance(physics, timingScenario.liftOnlyTimeS),
     [physics, timingScenario.liftOnlyTimeS],
+  );
+  const armStopResults = useMemo(
+    () => getArmStopPerformance(physics, armStopScenario),
+    [physics, armStopScenario],
   );
   const timingResults = useMemo(() => {
     const liftOnlyTimeS = Math.max(0.01, finite(timingScenario.liftOnlyTimeS, 0.727));
@@ -630,7 +638,28 @@ export default function Home() {
       const savedPhysics = window.localStorage.getItem("systm-diffy-physics");
       if (savedPhysics) {
         try {
-          setPhysics({ ...DEFAULT_PHYSICS, ...JSON.parse(savedPhysics) });
+          const savedValues = JSON.parse(savedPhysics);
+          // Preserve a customized value from the earlier constant-load model
+          // by treating it as friction in the new dynamic arm model.
+          if (
+            savedValues.armFrictionTorqueInLb == null
+            && Number.isFinite(savedValues.armLoadTorqueInLb)
+          ) {
+            savedValues.armFrictionTorqueInLb = savedValues.armLoadTorqueInLb;
+          }
+          // Migrate the previous example geometry only when it is still an
+          // exact match. The new defaults preserve the same 6.5 lbf·in hold
+          // torque while matching Colin's 0.316 N·m braking calculation.
+          if (
+            savedValues.armMassLb === 1
+            && savedValues.armCenterOfMassIn === 5
+            && savedValues.payloadMassLb === 0.25
+            && savedValues.payloadDistanceIn === 6
+          ) {
+            savedValues.armCenterOfMassIn = 6.5;
+            savedValues.payloadMassLb = 0;
+          }
+          setPhysics({ ...DEFAULT_PHYSICS, ...savedValues });
         } catch {
           window.localStorage.removeItem("systm-diffy-physics");
         }
@@ -641,6 +670,14 @@ export default function Home() {
           setTimingScenario({ ...COLIN_TIMING_SCENARIO, ...JSON.parse(savedTiming) });
         } catch {
           window.localStorage.removeItem("systm-diffy-timing");
+        }
+      }
+      const savedArmStop = window.localStorage.getItem("systm-diffy-arm-stop");
+      if (savedArmStop) {
+        try {
+          setArmStopScenario({ ...COLIN_ARM_STOP_SCENARIO, ...JSON.parse(savedArmStop) });
+        } catch {
+          window.localStorage.removeItem("systm-diffy-arm-stop");
         }
       }
       storageLoadedRef.current = true;
@@ -662,6 +699,11 @@ export default function Home() {
     if (!storageLoadedRef.current) return;
     window.localStorage.setItem("systm-diffy-timing", JSON.stringify(timingScenario));
   }, [timingScenario]);
+
+  useEffect(() => {
+    if (!storageLoadedRef.current) return;
+    window.localStorage.setItem("systm-diffy-arm-stop", JSON.stringify(armStopScenario));
+  }, [armStopScenario]);
 
   useEffect(() => {
     if (!playing || totalDuration <= 0) return;
@@ -751,6 +793,24 @@ export default function Home() {
     setTimingScenario((current) => ({ ...current, [key]: value }));
   };
 
+  const updateArmStop = <Key extends keyof ArmStopScenario,>(
+    key: Key,
+    value: ArmStopScenario[Key],
+  ) => {
+    setArmStopScenario((current) => ({ ...current, [key]: value }));
+  };
+
+  const loadColinArmStopPreset = () => {
+    setArmStopScenario(COLIN_ARM_STOP_SCENARIO);
+    setPhysics((current) => ({
+      ...current,
+      armMassLb: DEFAULT_PHYSICS.armMassLb,
+      armCenterOfMassIn: DEFAULT_PHYSICS.armCenterOfMassIn,
+      payloadMassLb: DEFAULT_PHYSICS.payloadMassLb,
+      payloadDistanceIn: DEFAULT_PHYSICS.payloadDistanceIn,
+    }));
+  };
+
   const loadTimingScenario = () => {
     if (!timingResults.canAnimate) return;
     const armDegrees = Number(timingResults.armDegrees.toFixed(6));
@@ -829,6 +889,11 @@ home ${returnTime}`);
               <div><span>Electrical draw</span><strong>{formatValue(telemetry.electricalPowerW, 1)}</strong><small>W estimated</small></div>
               <div><span>Current / motor</span><strong>{formatValue(telemetry.currentPerMotorA, 2)}</strong><small>A estimated</small></div>
               <div><span>Lift speed</span><strong>{formatValue(telemetry.liftSpeedInS, 1)}</strong><small>in/s</small></div>
+              <div><span>Arm gravity torque</span><strong>{formatValue(telemetry.armGravityTorqueInLb, 2)}</strong><small>lbf·in signed</small></div>
+              <div><span>Arm acceleration torque</span><strong>{formatValue(telemetry.armAccelerationTorqueInLb, 2)}</strong><small>lbf·in from Iα</small></div>
+              <div><span>Arm friction torque</span><strong>{formatValue(telemetry.armFrictionTorqueInLb, 2)}</strong><small>lbf·in signed</small></div>
+              <div><span>Total arm torque</span><strong>{formatValue(telemetry.requiredArmTorqueInLb, 2)}</strong><small>lbf·in required</small></div>
+              <div><span>Arm moment of inertia</span><strong>{formatValue(telemetry.armMomentOfInertiaLbIn2, 1)}</strong><small>lb·in² estimate</small></div>
             </div>
           </section>
 
@@ -1063,6 +1128,20 @@ home ${returnTime}`);
             </div>
 
             <div className="guide-section">
+              <h4>Worst-case arm stop</h4>
+              <dl className="guide-definition-grid">
+                <div><dt>Arm starting speed</dt><dd>Arm-output speed immediately before braking. Colin’s measured example is 97.5 RPM.</dd></div>
+                <div><dt>Stop time</dt><dd>Time allowed to decelerate from the starting speed to zero. A shorter stop requires more inertia torque.</dd></div>
+                <div><dt>Effective motor:arm reduction</dt><dd>Total motor-shaft-to-arm ratio used only by this stop check. Unlike the timing calculator’s ratio label, this value changes the torque math.</dd></div>
+                <div><dt>PID braking peak multiplier</dt><dd>Editable allowance for a PID controller commanding more than the average constant-deceleration torque. Use 1.00× to remove this allowance.</dd></div>
+                <div><dt>Ideal shared total</dt><dd>Horizontal holding torque plus average braking torque after gearing, before efficiency loss. This is shared by all arm motors—not required from each motor.</dd></div>
+                <div><dt>Adjusted peak total</dt><dd>Holding torque plus PID-adjusted braking torque, divided by the hardware model’s mechanism efficiency.</dd></div>
+                <div><dt>Peak per motor</dt><dd>Adjusted shared total divided by the modeled total motor count.</dd></div>
+                <div><dt>Stall load</dt><dd>Peak per-motor torque divided by the selected cartridge’s modeled stall torque.</dd></div>
+              </dl>
+            </div>
+
+            <div className="guide-section">
               <h4>Hardware model inputs</h4>
               <dl className="guide-definition-grid">
                 <div><dt>Motor cartridge</dt><dd>V5 internal gearset free speed: 100, 200, or 600 RPM.</dd></div>
@@ -1077,7 +1156,10 @@ home ${returnTime}`);
                 <div><dt>Estimated slide friction</dt><dd>Additional opposing linear force from bearings, misalignment, and cable routing.</dd></div>
                 <div><dt>Mechanism efficiency</dt><dd>Fraction of motor-side mechanical work that reaches the lift or arm.</dd></div>
                 <div><dt>Motor efficiency estimate</dt><dd>Used to convert mechanical demand into estimated electrical watts.</dd></div>
-                <div><dt>Arm resisting torque</dt><dd>External torque the motors must overcome while rotating the end effector.</dd></div>
+                <div><dt>Arm mass</dt><dd>Moving arm/end-effector mass used in both gravity torque and moment of inertia.</dd></div>
+                <div><dt>Arm center-of-mass radius</dt><dd>Distance from the pivot to the arm assembly’s balance point.</dd></div>
+                <div><dt>Payload mass / radius</dt><dd>Game-object or tool mass modeled as a point mass at its distance from the pivot.</dd></div>
+                <div><dt>Arm friction torque</dt><dd>Additional bearing, cable, and mechanism resistance opposing arm motion.</dd></div>
                 <div><dt>Physics-limit animation</dt><dd>Automatically lengthens any command whose required motor RPM exceeds the modeled loaded speed.</dd></div>
                 <div><dt>Reset defaults</dt><dd>Restores the original 4-motor, 600-RPM, 1.5-inch-spool model values.</dd></div>
               </dl>
@@ -1095,6 +1177,9 @@ home ${returnTime}`);
                 <div><dt>Mechanical watts</dt><dd>Estimated shaft power needed for lift and arm work, including mechanism losses.</dd></div>
                 <div><dt>Electrical watts</dt><dd>Estimated total motor electrical draw, capped at the V5-reported 22 W per motor range.</dd></div>
                 <div><dt>Current per motor</dt><dd>Approximate current from 0.15 A at no load toward 2.5 A near stall.</dd></div>
+                <div><dt>Arm gravity torque</dt><dd>Signed holding torque. It is near zero vertically and reaches maximum magnitude when horizontal.</dd></div>
+                <div><dt>Arm acceleration torque</dt><dd>Signed dynamic torque calculated from the modeled moment of inertia and angular acceleration.</dd></div>
+                <div><dt>Total arm torque</dt><dd>Gravity, acceleration, and friction torque combined before gearing and efficiency losses.</dd></div>
                 <div><dt>Speed / acceleration</dt><dd>Instantaneous linear lift motion in inches per second and inches per second squared.</dd></div>
                 <div><dt>Speed load</dt><dd>Requested peak motor RPM divided by the available modeled motor RPM.</dd></div>
                 <div><dt>Dynamic force safety</dt><dd>Stall lift force divided by peak required force. Above 1.0 has modeled force margin.</dd></div>
@@ -1103,7 +1188,7 @@ home ${returnTime}`);
 
             <div className="guide-section equations-section">
               <h4>Equations used by the tool</h4>
-              <p className="guide-symbols"><b>Symbols:</b> <code>D</code> lift travel, <code>T</code> move time, <code>d</code> motor-spool diameter, <code>r</code> rigging multiplier, <code>R</code> motor:winch reduction, <code>η</code> efficiency, and <code>s</code> lift power share from 0 to 1.</p>
+              <p className="guide-symbols"><b>Symbols:</b> <code>D</code> lift travel, <code>T</code> move time, <code>d</code> motor-spool diameter, <code>r</code> radius, <code>R</code> reduction, <code>η</code> efficiency, <code>m</code> mass, <code>I</code> moment of inertia, <code>θ</code> arm angle from vertical, and <code>α</code> angular acceleration.</p>
               <div className="equation-list">
                 <div><code>p(u) = 3u² − 2u³, &nbsp;u = t / T</code><span>Smooth position profile used for every move.</span></div>
                 <div><code>vavg = D / T, &nbsp;vpeak = 1.5D / T</code><span>Average and peak lift speed for that smooth profile.</span></div>
@@ -1116,6 +1201,15 @@ home ${returnTime}`);
                 <div><code>B = −lift turns + arm turns</code><span>Differential command for Motor Group B.</span></div>
                 <div><code>effective load = max(weight − counterbalance, 0) + friction</code><span>Static linear load used for the lift torque estimate.</span></div>
                 <div><code>Frequired = Fgravity + Ffriction + ma</code><span>Instantaneous lift force; unit conversions are applied internally.</span></div>
+                <div><code>Iarm = marm rcg² + mpayload rpayload²</code><span>Point-mass moment-of-inertia estimate around the arm pivot.</span></div>
+                <div><code>τgravity = (Warm rcg + Wpayload rpayload) sin(θ)</code><span>Signed arm holding torque: zero vertically and maximum horizontally.</span></div>
+                <div><code>τacceleration = Iarm α</code><span>Additional signed torque needed to angularly accelerate the arm and payload.</span></div>
+                <div><code>τarm = τgravity + τacceleration + τfriction</code><span>Total output torque passed through the differential gearing and efficiency model.</span></div>
+                <div><code>ω₀ = RPM × 2π / 60, &nbsp;|αstop| = ω₀ / tstop</code><span>Starting angular speed and average deceleration for the worst-case stop.</span></div>
+                <div><code>τhold,shared = τgravity,max / Rstop</code><span>Ideal motor-side holding torque shared by the complete motor group.</span></div>
+                <div><code>τbrake,shared = Iarm |αstop| / Rstop</code><span>Ideal average motor-side braking torque shared by all arm motors.</span></div>
+                <div><code>τpeak,total = (τhold,shared + kPID τbrake,shared) / η</code><span>Estimated loss- and PID-adjusted shared peak.</span></div>
+                <div><code>τpeak,motor = τpeak,total / motor count</code><span>Torque assigned to each motor before comparison with per-motor stall torque.</span></div>
                 <div><code>τstall,motor = 2.1 × (100 / cartridge RPM) N·m</code><span>Cartridge-adjusted V5 11W stall torque per motor.</span></div>
                 <div><code>Fstall = τstall × motor count × R × η / (radius × r)</code><span>Modeled maximum lift force at the cable.</span></div>
                 <div><code>force safety = Fstall / Fpeak-required</code><span>Dynamic force margin for the entered full-lift target.</span></div>
@@ -1126,13 +1220,13 @@ home ${returnTime}`);
                 <div><code>Tsplit = Tlift / s</code><span>Ideal full-lift time when only share <code>s</code> goes to lifting.</span></div>
                 <div><code>arm RPM = (θref / 360Tref) × 60 × (1 − s)</code><span>Arm output during the ideal power split.</span></div>
                 <div><code>arm revolutions = arm RPM × Tsplit / 60</code><span>Arm travel completed while the split lift reaches 100%.</span></div>
-                <div><code>Pmech = (|Fv| + τ|ω|) / ηmechanism</code><span>Estimated mechanical demand for lift plus arm.</span></div>
+                <div><code>Pmech = (|Fv| + |τarmω|) / ηmechanism</code><span>Estimated mechanical demand for lift plus the dynamic arm load.</span></div>
                 <div><code>Iper-motor = 0.15 + (2.5 − 0.15) × load fraction</code><span>Approximate V5 motor current, clamped between no-load and stall.</span></div>
                 <div><code>Pelectrical ≈ max(Pmech / ηmotor, torque-based estimate)</code><span>Electrical estimate, capped at 22 W per motor to match the reported V5 range.</span></div>
               </div>
             </div>
 
-            <p className="guide-calibration-note">This is a design estimate, not a replacement for testing. For the closest prediction, measure the real pitch diameters, moving weight, full-stroke time, and V5 Motor Dashboard current, then tune friction and efficiency until the model matches the robot.</p>
+            <p className="guide-calibration-note">This is a design estimate, not a replacement for testing. For the closest prediction, measure the real pitch diameters, moving weight, arm mass, center of mass, payload radius, full-stroke time, and V5 Motor Dashboard current, then tune friction and efficiency until the model matches the robot.</p>
           </section>
           </>, guideHost)}
 
@@ -1284,6 +1378,116 @@ home ${returnTime}`);
             </p>
           </section>
 
+          <section className="arm-stop-calculator" aria-labelledby="arm-stop-title">
+            <div className="timing-title arm-stop-title">
+              <div>
+                <span className="eyebrow">WORST-CASE ARM STOP</span>
+                <h3 id="arm-stop-title">Shared motor torque check</h3>
+                <p>Uses the arm mass, center of mass, payload, motor count, cartridge, and mechanism efficiency from the hardware model.</p>
+              </div>
+              <button className="timing-preset" onClick={loadColinArmStopPreset}>
+                Colin stop preset
+              </button>
+            </div>
+
+            <div className="arm-stop-input-grid">
+              <label className="timing-field">
+                <span>Arm starting speed</span>
+                <div>
+                  <input
+                    aria-label="Arm stop starting speed"
+                    type="number"
+                    min="0"
+                    max="1000"
+                    step="0.1"
+                    value={armStopScenario.startRpm}
+                    onChange={(event) => updateArmStop("startRpm", Number(event.target.value))}
+                  />
+                  <small>rpm</small>
+                </div>
+              </label>
+              <label className="timing-field">
+                <span>Stop time</span>
+                <div>
+                  <input
+                    aria-label="Arm stop time"
+                    type="number"
+                    min="0.01"
+                    max="10"
+                    step="0.01"
+                    value={armStopScenario.stopTimeS}
+                    onChange={(event) => updateArmStop("stopTimeS", Number(event.target.value))}
+                  />
+                  <small>sec</small>
+                </div>
+              </label>
+              <label className="timing-field">
+                <span>Effective motor:arm reduction</span>
+                <div>
+                  <input
+                    aria-label="Effective arm stop reduction"
+                    type="number"
+                    min="0.1"
+                    max="100"
+                    step="0.1"
+                    value={armStopScenario.effectiveReduction}
+                    onChange={(event) => updateArmStop("effectiveReduction", Number(event.target.value))}
+                  />
+                  <small>:1</small>
+                </div>
+              </label>
+              <label className="timing-field">
+                <span>PID braking peak multiplier</span>
+                <div>
+                  <input
+                    aria-label="PID braking peak multiplier"
+                    type="number"
+                    min="1"
+                    max="5"
+                    step="0.05"
+                    value={armStopScenario.pidPeakMultiplier}
+                    onChange={(event) => updateArmStop("pidPeakMultiplier", Number(event.target.value))}
+                  />
+                  <small>×</small>
+                </div>
+              </label>
+            </div>
+
+            <div className="arm-stop-equation-callout">
+              <span>Ideal motor-side total · Colin preset ≈ 0.500 N·m</span>
+              <strong>
+                {formatValue(armStopResults.idealHoldingSharedNm, 3)} + {formatValue(armStopResults.idealBrakingSharedNm, 3)} ≈ {formatValue(
+                  Math.round(armStopResults.idealHoldingSharedNm * 1000) / 1000
+                    + Math.round(armStopResults.idealBrakingSharedNm * 1000) / 1000,
+                  3,
+                )} N·m
+              </strong>
+              <p>That is shared by all {armStopResults.totalMotors} modeled motors. It is not {formatValue(armStopResults.idealCombinedSharedNm, 3)} N·m per motor.</p>
+            </div>
+
+            <div className="timing-result-grid arm-stop-result-grid">
+              <div><span>Ideal hold · shared</span><strong>{formatValue(armStopResults.idealHoldingSharedNm, 3)} N·m</strong></div>
+              <div><span>Ideal brake · shared</span><strong>{formatValue(armStopResults.idealBrakingSharedNm, 3)} N·m</strong></div>
+              <div className="result-accent"><span>Ideal combined · shared</span><strong>{formatValue(armStopResults.idealCombinedSharedNm, 3)} N·m</strong></div>
+              <div className="result-accent"><span>PID/loss peak · shared</span><strong>{formatValue(armStopResults.lossAdjustedPeakSharedNm, 3)} N·m</strong></div>
+              <div><span>Adjusted peak per motor</span><strong>{formatValue(armStopResults.lossAdjustedPeakPerMotorNm, 3)} N·m</strong></div>
+              <div><span>Per-motor stall load</span><strong>{formatValue(armStopResults.perMotorStallLoadFraction * 100, 1)}%</strong></div>
+              <div><span>Starting angular speed</span><strong>{formatValue(armStopResults.startAngularSpeedRadS, 2)} rad/s</strong></div>
+              <div><span>Average deceleration</span><strong>{formatValue(armStopResults.averageAngularDecelerationRadS2, 2)} rad/s²</strong></div>
+            </div>
+
+            <div className={`arm-stop-status ${armStopResults.withinStallTorque ? "good" : "bad"}`}>
+              <strong>{armStopResults.withinStallTorque ? "Adjusted peak stays below modeled stall torque" : "Adjusted peak exceeds modeled stall torque"}</strong>
+              <span>
+                {formatValue(armStopResults.lossAdjustedPeakPerMotorNm, 3)} N·m per motor versus {formatValue(armStopResults.stallTorquePerMotorNm, 3)} N·m stall per motor · {formatValue(physics.mechanismEfficiency * 100, 0)}% mechanism efficiency
+              </span>
+            </div>
+
+            <p className="arm-stop-note">
+              This worst case assumes horizontal gravity torque and commanded braking torque act in the same direction. The ideal combined line excludes losses and PID overshoot so it stays comparable to Colin’s hand calculation. The adjusted peak applies the editable PID multiplier to braking torque, then applies mechanism efficiency. Output-side check: {formatValue(armStopResults.maximumGravityOutputTorqueNm, 3)} N·m gravity + {formatValue(armStopResults.brakingOutputTorqueNm, 3)} N·m inertia with I = {formatValue(armStopResults.momentOfInertiaKgM2, 4)} kg·m².
+            </p>
+          </section>
+
           <section className="engineering-model">
             <div className="section-title model-title">
               <div>
@@ -1400,18 +1604,38 @@ home ${returnTime}`);
                   onChange={(event) => updatePhysics("motorEfficiency", Number(event.target.value) / 100)} /><small>%</small></div>
               </label>
               <label>
-                <span>Arm resisting torque</span>
-                <div><input type="number" min="0" max="20" step="0.1" value={physics.armLoadTorqueInLb}
-                  onChange={(event) => updatePhysics("armLoadTorqueInLb", Number(event.target.value))} /><small>in·lb</small></div>
+                <span>Arm mass</span>
+                <div><input type="number" min="0" max="20" step="0.05" value={physics.armMassLb}
+                  onChange={(event) => updatePhysics("armMassLb", Number(event.target.value))} /><small>lb</small></div>
+              </label>
+              <label>
+                <span>Arm center of mass</span>
+                <div><input type="number" min="0" max="36" step="0.1" value={physics.armCenterOfMassIn}
+                  onChange={(event) => updatePhysics("armCenterOfMassIn", Number(event.target.value))} /><small>in from pivot</small></div>
+              </label>
+              <label>
+                <span>Payload mass</span>
+                <div><input type="number" min="0" max="10" step="0.05" value={physics.payloadMassLb}
+                  onChange={(event) => updatePhysics("payloadMassLb", Number(event.target.value))} /><small>lb</small></div>
+              </label>
+              <label>
+                <span>Payload distance</span>
+                <div><input type="number" min="0" max="48" step="0.1" value={physics.payloadDistanceIn}
+                  onChange={(event) => updatePhysics("payloadDistanceIn", Number(event.target.value))} /><small>in from pivot</small></div>
+              </label>
+              <label>
+                <span>Arm friction torque</span>
+                <div><input type="number" min="0" max="20" step="0.1" value={physics.armFrictionTorqueInLb}
+                  onChange={(event) => updatePhysics("armFrictionTorqueInLb", Number(event.target.value))} /><small>lbf·in</small></div>
               </label>
             </div>
             <p className="model-help">
-              Rigging multiplier means final lift travel ÷ winch cable travel. Use 1.0 unless the cable layout mechanically multiplies stage speed.
+              Arm and payload mass should already be included in Total moving weight. The separate arm values only calculate rotation gravity and inertia. The point-mass estimate uses I = mr² at each entered radius.
             </p>
           </section>
 
           <p className="engineering-note">
-            Engineering estimate—not a substitute for testing. The V5 baseline uses official 11W motor speed, torque, and current-limit data. Calibrate weight, friction, efficiency, and spool diameters against the finished mechanism for the closest result. <a href="https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-11W-Performance" target="_blank" rel="noreferrer">VEX motor reference ↗</a>
+            Engineering estimate—not a substitute for testing. The V5 baseline uses official 11W motor speed, torque, and current-limit data. Calibrate lift weight, arm mass, center of mass, friction, efficiency, and spool diameters against the finished mechanism for the closest result. <a href="https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-11W-Performance" target="_blank" rel="noreferrer">VEX motor reference ↗</a>
           </p>
         </aside>
       </section>

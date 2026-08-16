@@ -1,6 +1,6 @@
 # SYSTM Diffy Lift Animator
 
-[**Open the web tool →**](https://the-flying-cuber.github.io/systm-diffy-lift-animator/)
+[**Open the web tool →**](https://systmvexu.github.io/systm-diffy-lift-animator/)
 
 An interactive browser-based tool for visualizing, programming, and estimating
 the performance of a continuous differential lift.
@@ -14,9 +14,20 @@ the performance of a continuous differential lift.
 - Displays the movement of both differential motor groups.
 - Estimates motor RPM, lift speed, force, torque load, current draw, and minimum
   movement time.
-- Allows mechanism values such as gearing, spool diameter, weight, friction,
-  and efficiency to be adjusted.
+- Calculates arm gravity torque from its live angle and calculates acceleration
+  torque from the arm and payload moment of inertia.
+- Includes an editable worst-case arm-stop check for starting RPM, stop time,
+  effective arm reduction, PID braking peak, shared total torque, per-motor
+  torque, and stall-load percentage.
+- Allows mechanism values such as gearing, spool diameter, lift weight, arm
+  mass, center of mass, payload geometry, friction, and efficiency to be adjusted.
 - Saves the current program and settings in the browser.
+
+The included Colin stop preset models a 97.5 RPM arm stopping in 0.1 seconds
+through a 4:1 reduction. With the default 6.5 lbf·in horizontal arm moment, the
+ideal motor-side result is about 0.184 N·m holding plus 0.316 N·m braking, or
+0.500 N·m shared across all modeled motors before efficiency losses and PID
+peak allowance.
 
 ## How to Use It
 
