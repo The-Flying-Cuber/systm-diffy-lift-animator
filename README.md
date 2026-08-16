@@ -1,8 +1,9 @@
 # SYSTM Diffy Lift Animator
 
-[**Open the web tool →**](https://the-flying-cuber.github.io/systm-diffy-lift-animator/)
+[**Open the web tool →**](https://systmvexu.github.io/systm-diffy-lift-animator/)
 
-An interactive browser-based tool for visualizing, programming, and estimating the performance of a continuous differential lift.
+An interactive browser-based tool for visualizing, programming, and estimating
+the performance of a continuous differential lift.
 
 ## What the Tool Does
 
@@ -11,8 +12,10 @@ An interactive browser-based tool for visualizing, programming, and estimating t
 - Extends Stage 8 next, followed by Stages 7 through 2.
 - Keeps Stage 1 stationary at the base.
 - Displays the movement of both differential motor groups.
-- Estimates motor RPM, lift speed, force, torque load, current draw, and minimum movement time.
-- Allows mechanism values such as gearing, spool diameter, weight, friction, and efficiency to be adjusted.
+- Estimates motor RPM, lift speed, force, torque load, current draw, and minimum
+  movement time.
+- Allows mechanism values such as gearing, spool diameter, weight, friction,
+  and efficiency to be adjusted.
 - Saves the current program and settings in the browser.
 
 ## How to Use It
@@ -46,10 +49,14 @@ The tool models the two motor groups using a differential mix:
 
 ## Engineering Notice
 
-The calculations are intended as design estimates. Real performance will depend on the completed robot, battery condition, friction, cable routing, structural alignment, motor temperature, and other physical factors.
+The calculations are intended as design estimates. Real performance will
+depend on the completed robot, battery condition, friction, cable routing,
+structural alignment, motor temperature, and other physical factors.
 
-For the closest results, enter measurements from the finished mechanism and compare the estimates with real V5 motor telemetry.
+For the closest results, enter measurements from the finished mechanism and
+compare the estimates with real V5 motor telemetry.
 
 ## About SYSTM
 
-Developed by **SYSTM Robotics** as a visualization and design tool for differential lift development.
+Developed by **SYSTM Robotics** as a visualization and design tool for
+differential lift development.

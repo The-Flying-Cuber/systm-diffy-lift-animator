@@ -52,10 +52,19 @@ const COLIN_TIMING_SCENARIO: TimingScenario = {
   liftSharePct: 50,
 };
 
-const DEFAULT_PROGRAM = `# SYSTM demo sequence
+const LEGACY_DEFAULT_PROGRAM = `# SYSTM demo sequence
 home 0.4
 lift 100 1.8
 rotate 90 0.8
+wait 0.35
+move 58 -45 1.25
+rotate 180 0.9
+wait 0.3
+home 1.6`;
+
+const DEFAULT_PROGRAM = `# SYSTM demo sequence
+home 0.4
+move 100 90 1.8
 wait 0.35
 move 58 -45 1.25
 rotate 180 0.9
@@ -615,7 +624,9 @@ export default function Home() {
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const saved = window.localStorage.getItem("systm-diffy-program");
-      if (saved) setSource(saved);
+      if (saved) {
+        setSource(saved === LEGACY_DEFAULT_PROGRAM ? DEFAULT_PROGRAM : saved);
+      }
       const savedPhysics = window.localStorage.getItem("systm-diffy-physics");
       if (savedPhysics) {
         try {

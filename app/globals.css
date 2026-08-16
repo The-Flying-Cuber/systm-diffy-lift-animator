@@ -301,7 +301,9 @@ a:focus-visible {
 }
 
 .arm-assembly {
-  transition: transform 80ms linear;
+  /* This transform is driven every animation frame. A CSS transition here
+     makes rotation chase behind the lift and finish after the lift stops. */
+  transition: none;
 }
 
 .arm-assembly > circle:first-child {
